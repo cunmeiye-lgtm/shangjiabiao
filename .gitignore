@@ -1,0 +1,35 @@
+# Runtime, caches and local configuration
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage*
+htmlcov/
+node_modules/
+.venv/
+.env
+.env.*
+!.env.example
+.scratch/
+local/
+output/
+dist/
+*.log
+
+# Business assets and generated deliverables belong on the business share
+*.psd
+*.psb
+*.xlsx
+*.xls
+*.xlsm
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.tif
+*.tiff
+*.bmp
+*.zip
+*.csv
+batch*.json
+*清单.json
+*核验.json
