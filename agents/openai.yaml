@@ -1,6 +1,6 @@
 interface:
   display_name: "精制素材分配与上架表"
-  short_description: "按PSD替换位分配纹身贴素材，计算链接容量并制作精制上架表"
-  default_prompt: "使用 $jingzhi-listing 检查本批PSD和素材，按确认规则分配上架目录并制作精制上架表。"
+  short_description: "按PSD分配纹身贴素材，支持多头去重、历史标题及最新上架表管理"
+  default_prompt: "使用 $jingzhi-listing 核对本批模板、素材及同店历史，按确认规则分配素材并制作或修改最新精制上架表。"
 policy:
   allow_implicit_invocation: true

@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import hashlib
 import json
 import random
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PureWindowsPath
 
-from materials import copy_one, exclusive_json, file_sha256, inventory_paths, safe_name
+from materials import copy_one, exclusive_json, file_sha256, image_metadata, inventory_paths, safe_name
 from template_cache import check_documents
 
 
@@ -29,6 +31,20 @@ def manifest_digest(manifest: dict) -> str:
                                      separators=(',', ':')).encode()).hexdigest()
 
 
+def head_slots(template: dict) -> list[str]:
+    """Absent head_slots preserves the original one-head profile and link schema."""
+    heads = template.get('head_slots', [template['head_slot']])
+    effects = [slot['name'] for slot in template['effect_slots']]
+    if (not isinstance(heads, list) or not heads
+            or any(not isinstance(name, str) for name in heads)
+            or len(set(heads)) != len(heads) or not set(heads) <= set(effects)
+            or heads[0] != template['head_slot']):
+        raise ValueError('head_slots must name distinct random slots, with head_slot first')
+    if len(heads) > 1 and len({slot['pool'] for slot in template['effect_slots']}) != 1:
+        raise ValueError('Multi-head profiles require one common pool for all random slots')
+    return heads
+
+
 def validate_config(config: dict) -> None:
     safe_name(config['product_key'])
     if not absolute(config['batch_root']):
@@ -46,11 +62,10 @@ def validate_config(config: dict) -> None:
         names = [safe_name(slot['name']) for slot in effects + fixed]
         if len(set(name.casefold() for name in names)) != len(names):
             raise ValueError('All replacement slot names must be unique ignoring case')
-        if not isinstance(template['head_slot'], str) or template['head_slot'] not in [s['name'] for s in effects]:
-            raise ValueError('Exactly one head_slot must name a random effect slot; multi-head profiles are unsupported')
-        if not isinstance(template['head_slice'], int) or template['head_slice'] < 1:
+        head_slots(template)
+        if type(template['head_slice']) is not int or template['head_slice'] < 1:
             raise ValueError('head_slice must be a positive integer')
-        if 'count' in template and (not isinstance(template['count'], int) or template['count'] < 1):
+        if 'count' in template and (type(template['count']) is not int or template['count'] < 1):
             raise ValueError('Explicit count must be a positive integer')
         for slot in effects:
             if slot['pool'] not in config['pools']:
@@ -103,7 +118,27 @@ def match_slots(effects: list[dict], pools: dict, head_slot: str,
     return {head_slot: head, **{slot: by_pixel[(slot, pixel)] for pixel, slot in owners.items()}}
 
 
+def arrangement_signatures(template, assignment):
+    """Keep PSD display order and semantic slot mappings as independent checks."""
+    ordered = tuple(assignment[slot['name']] for slot in template['effect_slots'])
+    named = tuple(sorted((slot['name'].casefold(), assignment[slot['name']])
+                         for slot in template['effect_slots']))
+    return tuple(sorted(ordered)), ordered, named
+
+
+def _record_arrangement(template, assignment, used_sets):
+    pixels = {slot: record['pixel_sha256'] for slot, record in assignment.items()}
+    key, ordered, named = arrangement_signatures(template, pixels)
+    if any(other != template['name'] and (old_order == ordered or old_named == named)
+           for other, old_order, old_named in used_sets.get(key, [])):
+        return False
+    used_sets.setdefault(key, []).append((template['name'], ordered, named))
+    return True
+
+
 def template_allocations(template: dict, pools: dict, seed: int, used_sets: dict) -> tuple[list, int]:
+    if len(head_slots(template)) > 1:
+        return multihead_allocations(template, pools, seed, used_sets)
     rng = random.Random(f'{seed}:{template["name"]}')
     effects = template['effect_slots']
     head_name = template['head_slot']
@@ -123,17 +158,48 @@ def template_allocations(template: dict, pools: dict, seed: int, used_sets: dict
     for head, initial in feasible[:wanted]:
         match = initial
         for attempt in range(256):
-            ordered = tuple(match[slot['name']]['pixel_sha256'] for slot in effects)
-            key = tuple(sorted(ordered))
-            previous = used_sets.get(key, [])
-            if all(other == template['name'] or arrangement != ordered for other, arrangement in previous):
-                used_sets.setdefault(key, []).append((template['name'], ordered))
+            if _record_arrangement(template, match, used_sets):
                 output.append(match)
                 break
             match = match_slots(effects, pools, head_name, head, rng)
         else:
             raise ValueError(f'{template["name"]}: cannot produce a distinct cross-template ordering after 256 attempts; change slot/pool assignment or requested count')
     return output, capacity
+
+
+def multihead_allocations(template: dict, pools: dict, seed: int,
+                          used_sets: dict) -> tuple[list, int]:
+    """Disjoint head groups attain N//K locally; bounded ordering search may fail."""
+    heads = head_slots(template)
+    pool = pools[template['effect_slots'][0]['pool']]
+    capacity = len(pool) // len(heads)
+    wanted = template.get('count', capacity)
+    if len(pool) < len(template['effect_slots']) or not capacity or wanted > capacity:
+        raise ValueError(f'{template["name"]}: insufficient images or requested count exceeds capacity {capacity}')
+    rng = random.Random(f'{seed}:{template["name"]}')
+    candidates = list(pool)
+    rng.shuffle(candidates)
+    remaining_slots = [slot['name'] for slot in template['effect_slots'] if slot['name'] not in heads]
+    output = []
+    for index in range(wanted):
+        group = candidates[index * len(heads):(index + 1) * len(heads)]
+        reserved = {record['pixel_sha256'] for record in group}
+        choices = [record for record in pool if record['pixel_sha256'] not in reserved]
+        output.append(_multihead_arrangement(template, group, choices, remaining_slots,
+                                              rng, used_sets))
+    return output, capacity
+
+
+def _multihead_arrangement(template, group, choices, remaining_slots, rng, used_sets):
+    for _ in range(256):
+        ordered_heads = list(group)
+        rng.shuffle(ordered_heads)
+        assignment = dict(zip(head_slots(template), ordered_heads))
+        assignment.update(zip(remaining_slots, rng.sample(choices, len(remaining_slots))))
+        if _record_arrangement(template, assignment, used_sets):
+            return assignment
+    raise ValueError(f'{template["name"]}: no distinct cross-template ordering after 256 attempts; '
+                     'bounded search exhausted, not a proof of global infeasibility')
 
 
 def build_plan(config: dict, records: dict) -> dict:
@@ -156,10 +222,20 @@ def build_plan(config: dict, records: dict) -> dict:
             for slot in template.get('fixed_slots', []):
                 copies.append(make_copy(link, slot['name'], records[slot['source']], 'fixed'))
     result = {'schema_version': 1, 'seed': config['seed'], 'product_key': config['product_key'],
-              'batch_root': config['batch_root'], 'templates': config['templates'],
+              'batch_root': config['batch_root'], 'templates': copy.deepcopy(config['templates']),
               'capacities': capacities, 'links': links, 'copies': copies,
               'fixed_slots_exempt': True}
-    return {**result, 'digest': manifest_digest(result)}
+    multihead_pools = {template['name']: {
+        'pool': template['effect_slots'][0]['pool'],
+        'pixels': sorted(record['pixel_sha256'] for record in pools[template['effect_slots'][0]['pool']]),
+        'records': [copy.deepcopy(records[path]) for path in sorted(set(
+            config['pools'][template['effect_slots'][0]['pool']]))]}
+        for template in config['templates'] if len(head_slots(template)) > 1}
+    if multihead_pools:
+        result['multihead_pools'] = multihead_pools
+    manifest = {**result, 'digest': manifest_digest(result)}
+    validate_manifest(manifest)
+    return manifest
 
 
 def make_link(config: dict, template: dict, index: int, identifier: int) -> dict:
@@ -182,9 +258,17 @@ def make_copy(link: dict, slot: str, record: dict, role: str) -> dict:
 def validate_manifest(manifest: dict) -> None:
     if manifest.get('schema_version') != 1 or manifest.get('digest') != manifest_digest(manifest):
         raise ValueError('Manifest digest/schema invalid; re-plan rather than manually editing')
+    if any(type(row.get(field)) is not int or row[field] < 1
+           for row in manifest['links'] for field in ('id', 'combination', 'head_slice')):
+        raise ValueError('Link IDs, combinations and slices must be positive integers')
+    if any(type(row.get('link_id')) is not int or row['link_id'] < 1 for row in manifest['copies']):
+        raise ValueError('Copy link IDs must be positive integers')
+    _validate_record_bindings(manifest['copies'])
     links = {row['id']: row for row in manifest['links']}
     if list(links) != list(range(1, len(links) + 1)) or len(links) != len(manifest['links']):
         raise ValueError('Link IDs must be consecutive and unique')
+    pools = {slot['pool']: [] for template in manifest['templates'] for slot in template['effect_slots']}
+    validate_config({**manifest, 'pools': pools})
     templates = {row['name']: row for row in manifest['templates']}
     safe_name(manifest['product_key'])
     if not absolute(manifest['batch_root']):
@@ -195,7 +279,7 @@ def validate_manifest(manifest: dict) -> None:
         if link != make_link(manifest, template, link['combination'] - 1, link['id']):
             raise ValueError('Link paths/positions differ from their template and batch root')
     destinations = set()
-    per_link, heads, slots_seen = {}, {}, {}
+    per_link, heads, slots_seen, assignments = {}, {}, {}, {}
     for row in manifest['copies']:
         link = links[row['link_id']]
         safe_name(row['slot'])
@@ -216,7 +300,8 @@ def validate_manifest(manifest: dict) -> None:
             if row['pixel_sha256'] in pixels:
                 raise ValueError('Repeated random image within link')
             pixels.add(row['pixel_sha256'])
-            if row['slot'] == link['head_slot']:
+            assignments.setdefault(link['id'], {})[row['slot']] = row['pixel_sha256']
+            if row['slot'] in head_slots(template):
                 used = heads.setdefault(link['template'], set())
                 if row['pixel_sha256'] in used:
                     raise ValueError('Repeated template head image')
@@ -226,6 +311,137 @@ def validate_manifest(manifest: dict) -> None:
         expected = {s['name'] for s in template['effect_slots'] + template.get('fixed_slots', [])}
         if slots_seen.get(link['id'], set()) != expected:
             raise ValueError('Missing replacement slots in manifest')
+    _validate_multihead_pools(manifest, templates, links, assignments)
+    _validate_record_bindings(_material_records(manifest))
+    _validate_round_robin(manifest, templates, links)
+    _validate_cross_template(templates, links, assignments)
+
+
+def _validate_multihead_pools(manifest, templates, links, assignments):
+    expected = {name for name, template in templates.items() if len(head_slots(template)) > 1}
+    metadata = manifest.get('multihead_pools', {})
+    if not isinstance(metadata, dict) or set(metadata) != expected:
+        raise ValueError('Multi-head pool metadata must bind exactly the multi-head templates')
+    for name in expected:
+        template, entry = templates[name], metadata[name]
+        if not isinstance(entry, dict):
+            raise ValueError('Invalid multi-head pool metadata')
+        pixels = entry.get('pixels')
+        if (entry.get('pool') != template['effect_slots'][0]['pool']
+                or not isinstance(pixels, list) or not pixels
+                or any(not isinstance(pixel, str) or not pixel for pixel in pixels)
+                or len(set(pixels)) != len(pixels)):
+            raise ValueError('Invalid deduplicated multi-head pool metadata')
+        if (len(pixels) < len(template['effect_slots'])
+                or manifest['capacities'].get(name) != len(pixels) // len(head_slots(template))):
+            raise ValueError('Multi-head capacity differs from floor(unique pixels / head slots)')
+        pool = set(pixels)
+        records = entry.get('records')
+        if not isinstance(records, list) or not records:
+            raise ValueError('Multi-head pool metadata requires all source records')
+        _validate_record_bindings(records)
+        if {record['pixel_sha256'] for record in records} != pool:
+            raise ValueError('Multi-head pool pixels differ from source record bindings')
+        members = {(record['source'], record['sha256'], record['pixel_sha256']) for record in records}
+        link_ids = {link['id'] for link in links.values() if link['template'] == name}
+        if any((row['source'], row['sha256'], row['pixel_sha256']) not in members
+               for row in manifest['copies'] if row['role'] == 'effect' and row['link_id'] in link_ids):
+            raise ValueError('Random image does not match its inspected pool record binding')
+        if any(not set(assignments[link['id']].values()) <= pool
+               for link in links.values() if link['template'] == name):
+            raise ValueError('Random image is outside its inspected multi-head pool')
+
+
+def _validate_round_robin(manifest, templates, links):
+    capacities = manifest.get('capacities', {})
+    if set(capacities) != set(templates):
+        raise ValueError('Manifest capacity keys differ from templates')
+    counts = {}
+    for name, template in templates.items():
+        capacity = capacities[name]
+        count = template.get('count', capacity)
+        if type(capacity) is not int or capacity < 1 or count > capacity:
+            raise ValueError('Invalid manifest capacity or requested count')
+        counts[name] = count
+    if dict(Counter(link['template'] for link in links.values())) != counts:
+        raise ValueError('Link counts differ from requested count/capacity')
+    expected = [(name, index + 1) for index in range(max(counts.values()))
+                for name in templates if index < counts[name]]
+    actual = [(link['template'], link['combination']) for link in links.values()]
+    if actual != expected:
+        raise ValueError('Links do not follow template round-robin order')
+
+
+def _validate_cross_template(templates, links, assignments):
+    previous = {}
+    for link in links.values():
+        template = templates[link['template']]
+        key, ordered, named = arrangement_signatures(template, assignments[link['id']])
+        if any(other != template['name'] and (old_order == ordered or old_named == named)
+               for other, old_order, old_named in previous.get(key, [])):
+            raise ValueError('Repeated cross-template photo set and display ordering or named-slot mapping')
+        previous.setdefault(key, []).append((template['name'], ordered, named))
+
+
+def _material_records(manifest):
+    return list(manifest['copies']) + [record for entry in manifest.get('multihead_pools', {}).values()
+                                       for record in entry['records']]
+
+
+def _validate_record_bindings(records):
+    """One byte SHA can decode to only one pixel SHA, including fixed inputs."""
+    byte_pixels, source_claims = {}, {}
+    for record in records:
+        if (not isinstance(record, dict) or any(not isinstance(record.get(key), str) or not record[key]
+                                               for key in ('source', 'sha256', 'pixel_sha256'))
+                or not absolute(record['source'])):
+            raise ValueError('Invalid source byte/pixel metadata binding')
+        digest, pixel = record['sha256'], record['pixel_sha256']
+        source = str(PureWindowsPath(record['source'])).casefold()
+        if digest in byte_pixels and byte_pixels[digest] != pixel:
+            raise ValueError('Same source byte SHA claims different pixel metadata')
+        claim = (digest, pixel)
+        if source in source_claims and source_claims[source] != claim:
+            raise ValueError('Same source path claims inconsistent byte/pixel metadata')
+        byte_pixels[digest] = pixel
+        source_claims[source] = claim
+
+
+def verify_material_metadata(manifest: dict, workers: int = 4) -> dict:
+    """Read real input bytes and decoded pixels before copy or readiness approval.
+
+    Includes every bound multi-head pool member, even if not assigned to a link.
+    Decode once per distinct byte SHA/extension; verify all aliases' bytes.
+    """
+    records = _material_records(manifest)
+    _validate_record_bindings(records)
+    sources = {record['source']: record for record in records}
+    groups = {}
+    for record in sources.values():
+        key = (record['sha256'], Path(record['source']).suffix.lower())
+        groups.setdefault(key, []).append(record)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_verify_material_group, groups.values()))
+    return {'sources': len(sources), 'decoded_groups': len(groups), 'verified': True}
+
+
+def _verify_material_group(records):
+    snapshots = {}
+    for record in records:
+        path = Path(record['source'])
+        stat = path.stat()
+        snapshots[record['source']] = (stat.st_size, stat.st_mtime_ns)
+        if file_sha256(path) != record['sha256']:
+            raise ValueError(f'Source hash changed: {path}')
+    decoded = image_metadata(records[0]['source'])
+    if any(record['pixel_sha256'] != decoded['pixel_sha256'] for record in records):
+        raise ValueError(f'Source pixel metadata mismatch: {records[0]["source"]}')
+    for record in records:
+        path = Path(record['source'])
+        stat = path.stat()
+        if (snapshots[record['source']] != (stat.st_size, stat.st_mtime_ns)
+                or file_sha256(path) != record['sha256']):
+            raise ValueError(f'Source changed during metadata verification: {path}')
 
 
 def verify_profiles(manifest: dict) -> None:
@@ -288,6 +504,7 @@ def verify_ready(manifest: dict, workers: int = 4) -> dict:
     verify_profiles(manifest)
     if not 1 <= workers <= 16:
         raise ValueError('workers must be between 1 and 16')
+    verify_material_metadata(manifest, workers)
     root = Path(manifest['batch_root'])
     saved = json.loads((root / '素材分配清单.json').read_text(encoding='utf-8'))
     if saved != manifest:
@@ -315,6 +532,7 @@ def execute_copy(manifest: dict, workers: int = 4) -> dict:
     verify_profiles(manifest)
     if not 1 <= workers <= 16:
         raise ValueError('workers must be between 1 and 16')
+    verify_material_metadata(manifest, workers)
     root = Path(manifest['batch_root'])
     saved = root / '素材分配清单.json'
     if saved.exists():

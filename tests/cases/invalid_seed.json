@@ -1,0 +1,7 @@
+{
+  "product_key": "TEST",
+  "batch_root": "C:/isolated/batch",
+  "seed": false,
+  "pools": {},
+  "templates": []
+}

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 
 const argv = process.argv.slice(2);
 const configPath = argv[0];
@@ -29,6 +30,8 @@ const config = JSON.parse((await fs.readFile(preparedPath, 'utf8')).replace(/^\u
 const require = createRequire(path.join(path.resolve(workDir), 'package.json'));
 const {FileBlob, SpreadsheetFile} = await import(pathToFileURL(require.resolve('@oai/artifact-tool')).href);
 const report = verify ? JSON.parse(await fs.readFile(path.join(workDir, 'verification.json'), 'utf8')) : null;
+const outputHash = async () => createHash('sha256').update(await fs.readFile(report.output)).digest('hex');
+if (verify && await outputHash() !== report.sha256) throw Error('Output hash changed before Artifact verification');
 const wb = await SpreadsheetFile.importXlsx(await FileBlob.load(verify ? report.output : config.snapshot));
 
 function column(number) {
@@ -113,5 +116,10 @@ if (!verify) {
 } else {
   checkValues();
   await render('final');
+  const verifiedHash = await outputHash();
+  if (verifiedHash !== report.sha256) throw Error('Output hash changed during Artifact verification');
+  await fs.writeFile(path.join(workDir, 'verification.json'), JSON.stringify({
+    ...report, artifact_verified: true, artifact_sha256: verifiedHash,
+  }, null, 2), 'utf8');
   console.log(JSON.stringify({verified: report.output, requestedValuesMatch: true}));
 }

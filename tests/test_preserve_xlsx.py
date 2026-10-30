@@ -194,13 +194,23 @@ class ArtifactIntegrationTests(unittest.TestCase):
                 subprocess.run(cmd, check=True, capture_output=True)
                 prepared = json.loads((work / 'prepared.json').read_text('utf-8'))
                 result = M.finish(prepared)
+                self.assertNotIn('artifact_verified', result)
                 subprocess.run(cmd + ['--verify'], check=True, capture_output=True)
+                receipt = json.loads((work / 'verification.json').read_text('utf-8'))
+                self.assertTrue(receipt.get('artifact_verified'))
+                self.assertEqual(receipt.get('artifact_sha256'), M.sha256(result['output']))
                 self.assertEqual(result['changed_cells'], 1 if operation == 'patch' else 186)
                 self.assertTrue((work / 'final_1.png').is_file())
                 with zipfile.ZipFile(source) as a, zipfile.ZipFile(result['output']) as b:
                     changed = set(prepared['sheet_members'].values())
                     for member in a.namelist():
                         if member not in changed: self.assertEqual(a.read(member), b.read(member))
+                if operation == 'patch':
+                    output = Path(result['output'])
+                    output.write_bytes(output.read_bytes() + b'changed-after-verification')
+                    failed = subprocess.run(cmd + ['--verify'], capture_output=True, text=True)
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn('Output hash changed', failed.stderr)
         self.assertEqual(M.sha256(source), digest)
 
 

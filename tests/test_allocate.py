@@ -164,7 +164,7 @@ class AllocationTest(unittest.TestCase):
             allocate.validate_manifest(plan)
 
     def test_execute_end_to_end_and_resume(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch('allocate.image_metadata', return_value={'pixel_sha256': 'one'}):
             root = Path(folder)
             cfg, records = copy_fixture(root)
             plan = allocate.build_plan(cfg, records)
@@ -187,7 +187,7 @@ class AllocationTest(unittest.TestCase):
                 allocate.execute_copy(plan)
 
     def test_missing_stale_and_unverified_profile_blocks_before_writes(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch('allocate.image_metadata', return_value={'pixel_sha256': 'one'}):
             root = Path(folder)
             cfg, records = copy_fixture(root)
             missing = copy.deepcopy(cfg)
@@ -205,7 +205,7 @@ class AllocationTest(unittest.TestCase):
             self.assertFalse((root / 'batch').exists())
 
     def test_extras_and_unowned_batch_are_preserved(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch('allocate.image_metadata', return_value={'pixel_sha256': 'one'}):
             root = Path(folder)
             cfg, records = copy_fixture(root)
             plan = allocate.build_plan(cfg, records)
@@ -229,7 +229,7 @@ class AllocationTest(unittest.TestCase):
             self.assertTrue(extra.is_file())
 
     def test_stale_receipt_and_changed_target_block_ready(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch('allocate.image_metadata', return_value={'pixel_sha256': 'one'}):
             root = Path(folder)
             cfg, records = copy_fixture(root)
             plan = allocate.build_plan(cfg, records)

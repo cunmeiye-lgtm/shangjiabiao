@@ -53,6 +53,8 @@
 
 首条命令先验证源表并保存快照，再经 Artifact Tool 写出 `authored.xlsx`；第二条只把已核验的 Artifact 值放回原生 ZIP 包；第三条用 Artifact 重新打开最终文件、检查请求值并渲染。查看 before/authored/final 预览；只交付最终输出和用户需要的核验记录，暂存中间表不当作完成品。不要省略第二、三步。
 
+`--verify`在检查和预览完成后，再核对最终输出SHA未变化，并向`verification.json`补写`artifact_verified: true`、`artifact_sha256`。输出在核验前或期间变化即失败。仅有`--finish`的报告不满足标题/版本登记条件。连续改表从[最新版本指针](history-and-versions.md)解析当前文件；最后显式登记新版，不由制表入口提前更新台账。
+
 ## 保留范围与停止条件
 
 - 除指定 worksheet XML 外，所有原始 ZIP 部件逐字节保留，包括样式、批注、说明页和关系；窄修改保留同页其他单元格、公式及设置。

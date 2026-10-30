@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path, PureWindowsPath
 
@@ -55,9 +56,30 @@ def validate_titles(titles, count):
     for title in titles:
         if not isinstance(title,str) or title != title.strip():
             raise ValueError('Title must be text without surrounding spaces')
+        if any(unicodedata.category(c) in ('Cf', 'Cc') for c in title):
+            raise ValueError('Title cannot contain invisible formatting or control characters')
         chinese = sum('\u4e00' <= c <= '\u9fff' for c in title)
         if not 26 <= chinese <= 30 or len(title) > 30:
             raise ValueError(f'Title must contain 26–30 Chinese characters, total <=30: {title}')
+
+
+def check_title_settings(settings, link_ids):
+    """Read explicit historical scope without registering an unfinished workbook."""
+    if 'title_history' not in settings:
+        return
+    history = settings['title_history']
+    allowed = {'state_path', 'workbooks', 'batch_id', 'parent_sha256'}
+    if (not isinstance(history, dict) or not history or set(history) - allowed
+            or not ({'state_path', 'workbooks'} & set(history))):
+        raise ValueError('title_history needs explicit state_path/workbooks and known options')
+    paths = history.get('workbooks', [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
+        raise ValueError('title_history.workbooks must be an explicit list of paths')
+    from listing_state import check_titles
+    check_titles(settings['titles'], settings['store_uid'],
+                 state_path=history.get('state_path'), history_paths=paths,
+                 batch_id=history.get('batch_id'), parent_sha256=history.get('parent_sha256'),
+                 link_ids=link_ids)
 
 
 def require_batch_choices(settings):
@@ -115,8 +137,10 @@ def make_rows(manifest, settings, baseline):
     verify_ready(manifest)
     links = manifest['links']
     validate_titles(settings['titles'],len(links))
-    if not links or [x['id'] for x in links] != list(range(1,len(links)+1)):
+    if (not links or any(type(x['id']) is not int for x in links)
+            or [x['id'] for x in links] != list(range(1,len(links)+1))):
         raise ValueError('Links need contiguous unique IDs starting at 1')
+    check_title_settings(settings, [link['id'] for link in links])
     codes = settings['codes']
     specs = sku_specs(codes,settings['single_code'])
     if len(settings['size_tiers']) != len(codes):
@@ -157,7 +181,7 @@ def make_rows(manifest, settings, baseline):
         paths.update(link[k] for k in ('source_folder','output_folder','psd_folder'))
         row = list(seed)
         edits = {0:settings['store_uid'],1:settings['store_uid'],2:title,8:'无',
-                 9:','.join(map(str,pages['main'])),10:','.join(map(str,pages['detail'])),
+                 9:'，'.join(map(str,pages['main'])),10:'，'.join(map(str,pages['detail'])),
                  11:link['output_folder'],12:None,13:link['id'],15:link['source_folder'],
                  16:link['psd_folder'],18:settings['save_draft'],19:0,23:0,28:0,29:'遥望星河'}
         for col,value in edits.items():row[col]=value
