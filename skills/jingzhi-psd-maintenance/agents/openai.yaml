@@ -1,0 +1,6 @@
+interface:
+  display_name: "精制PSD模板检查与维护"
+  short_description: "检查智能对象格式、编号与分页，并按授权保护原件修复精制PSD模板"
+  default_prompt: "使用 $jingzhi-psd-maintenance 检查指定PSD目录，忽略旧文件夹，定位兼容及分页问题并按我的授权处理。"
+policy:
+  allow_implicit_invocation: true
