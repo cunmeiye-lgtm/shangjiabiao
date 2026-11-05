@@ -1,0 +1,4 @@
+interface:
+  display_name: "纹身与皮肤真实融合"
+  short_description: "使用AI逐张融合纹身与皮肤，保留图案和画面，批量平铺保存并核对成品"
+  default_prompt: "使用 $tattoo-skin-blend 处理我指定目录中的图片，将纹身自然融入皮肤，成品统一保存到指定的融合目录。"

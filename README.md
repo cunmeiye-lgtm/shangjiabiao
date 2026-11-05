@@ -4,7 +4,7 @@
 
 根据 PSD 的实际替换位计算链接数量、复制分配已有图片，并制作精制拼多多上架表。支持单款及 2、4、6、8 款组合，也支持只修改已有表的指定字段。生成的素材和工作簿供精制工具后续使用；技能本身不发布商品。
 
-本版增加多头图联合去重、同店跨日期标题台账、可配置SKU营销名称和最新工作簿版本指针。另附独立的[精制PSD模板检查与维护](skills/jingzhi-psd-maintenance/SKILL.md)技能。
+本版增加多头图联合去重、同店跨日期标题台账、可配置SKU营销名称和最新工作簿版本指针。另附独立的[精制PSD模板检查与维护](skills/jingzhi-psd-maintenance/SKILL.md)和[纹身与皮肤真实融合](skills/tattoo-skin-blend/SKILL.md)技能。
 
 店铺名用于识别目标，UID会因重新授权变化。每批读取用户指定的最新店铺表或采用其本批明确的新UID，不把旧UID固化为默认值；已明确的信息不重复问。详见[店铺身份与UID核对](references/store-identity.md)。真实店铺清单由团队在业务目录维护，不随技能发布。
 
@@ -21,6 +21,8 @@
 更新时先备份现有技能目录，再用新版本完整替换；不把业务配置或素材保存在安装目录。仅更新这个技能，不覆盖整个 `.codex` 目录。
 
 需要模板检查/修复功能时，将仓库内`skills/jingzhi-psd-maintenance`单独复制到`%USERPROFILE%\.codex\skills\jingzhi-psd-maintenance`，可用`$jingzhi-psd-maintenance`调用。该技能自含检查及授权修复方法，不附带通用PSD二进制修补器；只做素材和表格时不需要启动修复流程。
+
+需要AI纹身融合时，将`skills/tattoo-skin-blend`单独复制到`%USERPROFILE%\.codex\skills\tattoo-skin-blend`（自定义`CODEX_HOME`时放其`skills`下），使用`$tattoo-skin-blend`并提供输入目录、成品目录及命名要求。它依赖Codex可用的内置AI图片编辑与本地图片查看能力，不是独立生图程序；逐张融合已有黑色或彩色纹身，保留图案与画面，成品平铺保存，不用代码合成图片。默认正常显色，只有本批明确要求时才制作刚揭下的近透明状态。AI编辑不保证非目标区域逐像素不变；工具拦截或效果不合格时明确报告缺失项，不用原图补数。
 
 ## 运行条件
 
@@ -63,7 +65,7 @@ SKU营销名由`sku_names`明确配置，例如`【试贴体验】1张`；改名
 
 ## 团队数据与仓库
 
-仓库根目录继续是可直接安装的`jingzhi-listing`，含本文件、`SKILL.md`、`agents/`、`references/`、`scripts/` 和 `tests/`；`skills/`内附可独立安装的PSD维护技能。建议使用私有仓库，由负责人管理成员访问。
+仓库根目录继续是可直接安装的`jingzhi-listing`，含本文件、`SKILL.md`、`agents/`、`references/`、`scripts/` 和 `tests/`；`skills/`内附可独立安装的PSD维护和AI纹身融合技能。建议使用私有仓库，由负责人管理成员访问。
 
 PSD、产品图、效果图、价格表、上架表基底、真实模板档案和批次配置由团队在业务共享盘维护，均不包含在技能包中。历史 D06 和四款案例仅用于回归验证；它们的店铺、数量和价格不是新批次默认设置。
 
