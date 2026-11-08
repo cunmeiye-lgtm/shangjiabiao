@@ -151,7 +151,11 @@ def validate_changes(config, parts, names, strings):
         if r < 2 or c > len(config['headers'][name]): raise ValueError(f'Unknown data cell: {name}!{ref}')
         if (name, ref) in seen: raise ValueError(f'Duplicate patch: {name}!{ref}')
         seen.add((name, ref))
-        scalar(change['value'])
+        value = change['value']
+        scalar(value)
+        if name == 'SPU' and config['headers'][name][c - 1] == '标题*' and isinstance(value, str):
+            from business import reject_apparel_title_terms
+            reject_apparel_title_terms(value)
         if 'expected' in change and cell_value(cells.get(ref), strings) != change['expected']:
             raise ValueError(f'expected value mismatch: {name}!{ref}')
         for merge in root.findall('s:mergeCells/s:mergeCell', N):

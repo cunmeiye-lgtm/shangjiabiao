@@ -60,6 +60,19 @@ class BusinessUpgradeTests(unittest.TestCase):
         spu = self.make()['sheets']['SPU']['rows'][0]
         self.assertEqual(spu[9:11], ['1，2，3', '1，2'])
 
+    def test_new_spu_title_rejects_clothing_terms(self):
+        for word in ['服装', '穿搭', '上衣', '短袖', '无袖', '衬衫', '背心', '衣服',
+                     '卫衣', '长袖', '连衣裙', '服饰', '穿着', '配饰', '衣饰', 'T恤', 'ｔ恤',
+                     '吊带裙', '吊带衫', '连帽衫', '毛衣']:
+            with self.subTest(word=word), self.assertRaisesRegex(ValueError, '服装|穿搭'):
+                self.make(titles=['甲' * 26 + word])
+
+    def test_tattoo_and_package_terms_remain_valid(self):
+        for phrase in ['花臂', '衣锦还乡题字', '造型', '四款组合装', '玫瑰搭配荆棘']:
+            title = phrase + '甲' * (27 - len(phrase))
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.make(titles=[title])['sheets']['SPU']['rows'][0][2], title)
+
     def test_invisible_formatting_cannot_make_a_new_title(self):
         for hidden in ['\u200b', '\ufeff', '\t']:
             with self.subTest(hidden=repr(hidden)), self.assertRaises(ValueError):

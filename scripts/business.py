@@ -50,6 +50,21 @@ def fixed_code(spec):
     return code if q == 1 else (f'{code}*{q}' if len(spec)==1 else f'({code})*{q}')
 
 
+APPAREL_TITLE_TERMS = (
+    '服装', '服饰', '配饰', '衣饰', '衣服', '衣着', '着装', '穿搭', '穿衣', '穿着',
+    '男装', '女装', '童装',
+    '上衣', '短袖', '长袖', '无袖', '衬衫', '背心', '卫衣', 'T恤', '外套', '夹克',
+    '连衣裙', '半身裙', '吊带裙', '吊带衫', '连帽衫', '毛衣', '牛仔裤', '短裤', '长裤',
+)
+
+
+def reject_apparel_title_terms(title):
+    normalized = unicodedata.normalize('NFKC', title).upper()
+    for term in APPAREL_TITLE_TERMS:
+        if term in normalized:
+            raise ValueError(f'纹身贴标题不能包含服装或穿搭词「{term}」')
+
+
 def validate_titles(titles, count):
     if len(titles) != count or len(set(titles)) != count:
         raise ValueError('Need one distinct title per link')
@@ -58,6 +73,7 @@ def validate_titles(titles, count):
             raise ValueError('Title must be text without surrounding spaces')
         if any(unicodedata.category(c) in ('Cf', 'Cc') for c in title):
             raise ValueError('Title cannot contain invisible formatting or control characters')
+        reject_apparel_title_terms(title)
         chinese = sum('\u4e00' <= c <= '\u9fff' for c in title)
         if not 26 <= chinese <= 30 or len(title) > 30:
             raise ValueError(f'Title must contain 26–30 Chinese characters, total <=30: {title}')
