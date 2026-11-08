@@ -1,6 +1,5 @@
 """Preservation-layer fault tests; small XML packages are isolated test fixtures."""
 import copy
-import importlib.util
 import json
 import os
 import subprocess
@@ -11,12 +10,11 @@ from unittest.mock import patch
 import zipfile
 from pathlib import Path
 
-SPEC = importlib.util.spec_from_file_location("preserve_xlsx", Path(__file__).parents[1] / "scripts/preserve_xlsx.py")
-M = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(M)
+sys.path.insert(0, str(Path(__file__).parents[1] / 'scripts'))
+import preserve_xlsx as M
 
 
-def fixture(path, value=0, merged=False):
+def fixture(path, value=0, merged=False, legacy_title=None):
     parts = {
         '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
         '_rels/.rels': '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
@@ -25,6 +23,11 @@ def fixture(path, value=0, merged=False):
         'xl/worksheets/sheet1.xml': f'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:C3"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>编号</t></is></c><c r="B1" t="inlineStr"><is><t>保存草稿箱</t></is></c><c r="C1" t="inlineStr"><is><t>说明</t></is></c></row><row r="2" ht="20" customHeight="1"><c r="A2"><v>1</v></c><c r="B2"><v>{value}</v></c></row><row r="3"><c r="A3"><f>A2+1</f><v>2</v></c></row></sheetData>{"<mergeCells><mergeCell ref=\"B2:C2\"/></mergeCells>" if merged else ""}<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>',
         'customXml/item1.xml': '<notes>keep verbatim</notes>',
     }
+    if legacy_title is not None:
+        member = 'xl/worksheets/sheet1.xml'
+        parts[member] = parts[member].replace('编号</t>', '标题*</t>').replace(
+            '<c r="A2"><v>1</v></c>',
+            f'<c r="A2" t="inlineStr"><is><t>{legacy_title}</t></is></c>')
     with zipfile.ZipFile(path, 'w') as z:
         for key, val in parts.items():
             z.writestr(key, val)
@@ -62,6 +65,24 @@ class PreserveTests(unittest.TestCase):
         self.config['changes'][0]['expected'] = 8
         with self.assertRaisesRegex(ValueError, 'expected'):
             self.prepared()
+
+    def test_raw_batch_and_patch_reject_apparel_in_bound_spu_title_column(self):
+        fixture(self.source, legacy_title='旧标题')
+        headers = {'SPU': ['标题*', '保存草稿箱', '说明']}
+        title = '甲' * 24 + '短袖穿搭'
+        batch = {'operation': 'batch', 'sheets': {'SPU': {'rows': [[title, 1, None]], 'seed_rows': [2]}}}
+        patch = {'operation': 'patch', 'changes': [{'sheet': 'SPU', 'cell': 'A2', 'value': title}]}
+        for job in [batch, patch]:
+            with self.subTest(operation=job['operation']), self.assertRaisesRegex(ValueError, '服装|穿搭'):
+                M.prepare({**self.config, **job, 'headers': headers}, self.root / job['operation'])
+
+    def test_other_cells_can_be_patched_with_an_apparel_term_and_a_legacy_title(self):
+        old_title = '旧标题含短袖穿搭'
+        fixture(self.source, legacy_title=old_title)
+        config = {**self.config, 'headers': {'SPU': ['标题*', '保存草稿箱', '说明']},
+                  'changes': [{'sheet': 'SPU', 'cell': 'C2', 'value': '衬衫'}]}
+        prepared = self.prepared(config)
+        self.assertEqual(M.read_cells(prepared['snapshot'], 'SPU', ['A2']), [old_title])
 
     def test_duplicate_patch(self):
         self.config['changes'] *= 2
